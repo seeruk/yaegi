@@ -1,11 +1,16 @@
 package interp
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 func (interp *Interpreter) importSrc(rPath, path, alias string) error {
@@ -136,9 +141,54 @@ func (interp *Interpreter) importSrc(rPath, path, alias string) error {
 	return nil
 }
 
+type module struct {
+	Path string
+	Version string
+	Time time.Time
+	Main bool
+	Dir string
+	GoMod string
+	GoVersion string
+}
+
 // pkgDir returns the absolute path in filesystem for a package given its name and
 // the root of the subtree dependencies.
 func pkgDir(goPath string, root, path string) (string, string, error) {
+	// Go Modules ...
+	command := exec.Command("go", "list", "-m", "-json", "all")
+
+	bs, err := command.CombinedOutput()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to execute `go env` command: %v", err)
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(bs))
+
+	var mods []module
+
+	for {
+		var mod module
+
+		err := decoder.Decode(&mod)
+		if err == io.EOF {
+			break
+		}
+
+		if err != nil {
+			return "", "", fmt.Errorf("balls: %v", err)
+		}
+
+		mods = append(mods, mod)
+	}
+
+	for _, mod := range mods {
+		if strings.HasPrefix(path, mod.Path) {
+			trimmed := strings.TrimPrefix(path, mod.Path)
+
+			return mod.Dir + trimmed, "", nil // found!
+		}
+	}
+
 	rPath := filepath.Join(root, "vendor")
 	dir := filepath.Join(goPath, "src", rPath, path)
 
